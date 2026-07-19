@@ -129,7 +129,7 @@ export OFFLANE_MCP_TOKEN=…                      # bearer, if the server authen
 
 ```
 offlane ls [prefix]                    list tool names + one-line descriptions
-offlane schema <tool>                  print one tool's input JSON schema
+offlane schema <tool> [<tool> ...]     print one (or several, batched) tools' schema(s)
 offlane call <tool> <args> --out PATH  run a tool; write payload to PATH; print a summary
                                        [--peek N]   also print first N records / N chars
 ```
@@ -140,9 +140,34 @@ offlane call <tool> <args> --out PATH  run a tool; write payload to PATH; print 
 
 1. `offlane schema <tool>` — **always** before first use. Read the whole schema
    (filters, projections, pagination); a skipped lever is silent quality loss.
+   Already know several tools you'll need next? **Batch them** —
+   `offlane schema <tool_a> <tool_b> <tool_c>` — to fetch the catalog once and get
+   a JSON object keyed by tool name back (see [Batching schema lookups](#batching-schema-lookups)).
 2. `offlane call <tool> '<json>' --out FILE` — writes the payload to `FILE`,
    prints only a `bytes/records/keys` summary.
 3. `jq '<projection>' FILE` — pull only the fields you need. Never `cat` the file.
+
+### Batching schema lookups
+
+`offlane schema` accepts more than one tool name. Passing several **traverses the
+tool catalog a single time** (instead of once per tool) and prints a JSON object
+keyed by tool name — do this whenever you already know the handful of tools your
+next steps will touch:
+
+```console
+$ offlane schema search_tool get_record list_records
+{
+  "search_tool": { "type": "object", "properties": { "query": … } },
+  "get_record":  { "type": "object", "properties": { "id": … } },
+  "list_records": { "type": "object", "properties": { "limit": … } }
+}
+
+$ offlane schema search_tool get_record | jq '.get_record.properties'   # still jq-able
+```
+
+A single tool still prints its bare schema, unchanged. If any requested name isn't
+found, `offlane` fails loud and lists **all** the missing names at once, so you fix
+them in one pass.
 
 ## How it works
 

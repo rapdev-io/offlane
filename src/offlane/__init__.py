@@ -31,7 +31,8 @@ stdlib-only (urllib/json/argparse) so the installed command has zero runtime dep
 
 Verbs:
   offlane ls [prefix]                    list tool names + one-line descriptions
-  offlane schema <tool>                  print one tool's input JSON schema
+  offlane schema <tool> [<tool> ...]     print one (or several, batched) tools' input
+                                         JSON schema(s)
   offlane call <tool> <args.json|-> --out PATH [--peek N]
                                          run a tool; write the payload to PATH;
                                          print ONLY a byte/record/keys summary
@@ -74,9 +75,12 @@ _RETRY_STATUS = frozenset({502, 503, 504})
 # usage truth.
 _HELP_EPILOG = """\
 protocol (reads run off-context — only what you jq-project ever enters context):
-  1. offlane schema <tool>                   ALWAYS before first use of any tool — read the
+  1. offlane schema <tool> [<tool> ...]      ALWAYS before first use of any tool — read the
                                              WHOLE schema (format / filters / projections /
-                                             pagination); a skipped lever is silent quality loss
+                                             pagination); a skipped lever is silent quality loss.
+                                             Batch several names when you know you'll need
+                                             them next — one call, catalog fetched once; the
+                                             batch prints a JSON object keyed by tool name
   2. offlane call <tool> '<json>' --out FILE writes the payload to FILE; prints ONLY a
                                              bytes/records/keys summary, never the body
   3. jq '<projection>' FILE                  pull ONLY the fields you need; never `cat` FILE
@@ -90,6 +94,7 @@ OFFLANE_SESSION_ID (optional; see the module header).
 examples:
   offlane ls
   offlane schema search_tool
+  offlane schema search_tool get_record list_records     # batch: catalog fetched once
   offlane call search_tool '{"limit":3}' --out /tmp/d.json && jq '.[].id' /tmp/d.json
 """
 
@@ -359,13 +364,15 @@ def _resolve_args(arg):
 
 
 # --- verbs -----------------------------------------------------------------
-def _list_tools(config, match_name=None):
+def _list_tools(config, match_names=None):
     """tools/list, following MCP cursor pagination.
 
     Raises on a malformed (non-object) result rather than silently returning a
-    short list. When `match_name` is given, short-circuits as soon as a page
-    contains that tool (the lazy-schema lookup path — no need to drain every page).
+    short list. When `match_names` is given (a collection of names), short-circuits
+    as soon as EVERY requested name has been seen — the lazy-schema lookup path, so
+    schema-ing one tool (or a batch of them) never drains pages it doesn't need.
     """
+    want = set(match_names) if match_names else None
     tools = []
     cursor = None
     seen = set()
@@ -378,8 +385,10 @@ def _list_tools(config, match_name=None):
             )
         page = result.get("tools") or []
         tools.extend(page)
-        if match_name is not None and any(t.get("name") == match_name for t in page):
-            break
+        if want is not None:
+            want -= {t.get("name") for t in page}
+            if not want:  # every requested name found — no need to drain the rest
+                break
         cursor = result.get("nextCursor")
         # A non-str/empty/repeat cursor ends pagination (and guards an unhashable
         # cursor from raising TypeError on the `in seen` check).
@@ -402,11 +411,27 @@ def cmd_ls(config, prefix=None):
     return 0
 
 
-def cmd_schema(config, tool):
-    match = next((t for t in _list_tools(config, match_name=tool) if t.get("name") == tool), None)
-    if match is None:
-        raise LaneError(f"tool not found: {tool!r} (try `offlane ls`)")
-    print(json.dumps(match.get("inputSchema", {}), indent=2, ensure_ascii=False))
+def cmd_schema(config, tools):
+    """Print a tool's input schema — or, for several tools, a name->schema map.
+
+    Batch every tool you already know you'll need next into ONE `schema` call: it
+    drains `tools/list` a single time instead of once per tool. One tool prints its
+    bare schema (unchanged); two or more print a JSON object keyed by tool name, so
+    the result is unambiguous and still `jq`-projectable (`... | jq '.some_tool'`).
+    """
+    catalog = {t.get("name"): t for t in _list_tools(config, match_names=tools)}
+    # Fail loud, naming EVERY missing tool at once (so the caller fixes them in one
+    # pass) — a silently-dropped tool is the same silent quality loss we warn about.
+    missing = [name for name in tools if name not in catalog]
+    if missing:
+        raise LaneError(
+            f"tool(s) not found: {', '.join(repr(m) for m in missing)} (try `offlane ls`)"
+        )
+    if len(tools) == 1:
+        print(json.dumps(catalog[tools[0]].get("inputSchema", {}), indent=2, ensure_ascii=False))
+    else:
+        schemas = {name: catalog[name].get("inputSchema", {}) for name in tools}
+        print(json.dumps(schemas, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -445,8 +470,17 @@ def build_parser():
     p_ls = sub.add_parser("ls", help="list tool names + one-line descriptions")
     p_ls.add_argument("prefix", nargs="?", help="filter to names starting with this prefix (e.g. hubspot)")
 
-    p_schema = sub.add_parser("schema", help="print one tool's input JSON schema")
-    p_schema.add_argument("tool")
+    p_schema = sub.add_parser(
+        "schema",
+        help="print one or more tools' input JSON schema(s)",
+        description="Print a tool's input schema. Pass several tool names to batch them "
+        "into one call (drains the catalog once); the batch prints a JSON object keyed "
+        "by tool name. Do this whenever you already know several tools you'll need next.",
+    )
+    p_schema.add_argument(
+        "tool", nargs="+", metavar="tool",
+        help="one or more tool names; batching several fetches the catalog a single time",
+    )
 
     p_call = sub.add_parser(
         "call",

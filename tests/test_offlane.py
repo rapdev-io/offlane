@@ -295,9 +295,94 @@ def test_list_tools_match_name_short_circuits(monkeypatch):
         return p
 
     monkeypatch.setattr(offlane, "_post", fake)
-    out = offlane._list_tools(offlane.Config(env={"OFFLANE_MCP_TOKEN": "t"}), match_name="target")
+    out = offlane._list_tools(offlane.Config(env={"OFFLANE_MCP_TOKEN": "t"}), match_names=["target"])
     assert seq["i"] == 2  # stopped after the matching page; page 3 never fetched
     assert any(t["name"] == "target" for t in out)
+
+
+def test_list_tools_match_names_batch_stops_when_all_found(monkeypatch):
+    # A batch short-circuits only once EVERY requested name has been seen — not on
+    # the first match. Here 'a' is on page 1, 'target' on page 2; page 3 is skipped.
+    pages = [
+        {"tools": [{"name": "a"}], "nextCursor": "c1"},
+        {"tools": [{"name": "target"}], "nextCursor": "c2"},
+        {"tools": [{"name": "z"}]},
+    ]
+    seq = {"i": 0}
+
+    def fake(method, params, cfg):
+        p = pages[seq["i"]]
+        seq["i"] += 1
+        return p
+
+    monkeypatch.setattr(offlane, "_post", fake)
+    out = offlane._list_tools(
+        offlane.Config(env={"OFFLANE_MCP_TOKEN": "t"}), match_names=["a", "target"]
+    )
+    assert seq["i"] == 2  # both found by page 2; page 3 never fetched
+    assert {t["name"] for t in out} == {"a", "target"}
+
+
+# --- schema (single + batched) ---------------------------------------------
+_SCHEMA_TOOLS = [
+    {"name": "alpha", "inputSchema": {"type": "object", "properties": {"a": {"type": "string"}}}},
+    {"name": "beta", "inputSchema": {"type": "object", "properties": {"b": {"type": "number"}}}},
+    {"name": "gamma", "inputSchema": {"type": "object"}},
+]
+
+
+def _schema_cfg():
+    return offlane.Config(env={"OFFLANE_MCP_TOKEN": "t"})
+
+
+def test_cmd_schema_single_prints_bare_schema(monkeypatch, capsys):
+    # One tool → the bare inputSchema (unchanged behavior), not a name-keyed map.
+    monkeypatch.setattr(offlane, "_list_tools", lambda *a, **k: _SCHEMA_TOOLS)
+    rc = offlane.cmd_schema(_schema_cfg(), ["alpha"])
+    printed = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert printed == _SCHEMA_TOOLS[0]["inputSchema"]  # bare schema, no "alpha" wrapper
+
+
+def test_cmd_schema_batch_prints_name_keyed_map(monkeypatch, capsys):
+    # Several tools → one JSON object keyed by tool name, in the order requested.
+    monkeypatch.setattr(offlane, "_list_tools", lambda *a, **k: _SCHEMA_TOOLS)
+    rc = offlane.cmd_schema(_schema_cfg(), ["alpha", "gamma"])
+    printed = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert printed == {
+        "alpha": _SCHEMA_TOOLS[0]["inputSchema"],
+        "gamma": _SCHEMA_TOOLS[2]["inputSchema"],
+    }
+
+
+def test_cmd_schema_passes_all_names_to_list_tools(monkeypatch, capsys):
+    # The batch must be resolved in a SINGLE _list_tools pass (all names handed to
+    # it at once), not one traversal per tool.
+    seen = {}
+
+    def fake_list(config, match_names=None):
+        seen["match_names"] = match_names
+        return _SCHEMA_TOOLS
+
+    monkeypatch.setattr(offlane, "_list_tools", fake_list)
+    offlane.cmd_schema(_schema_cfg(), ["alpha", "beta"])
+    assert list(seen["match_names"]) == ["alpha", "beta"]
+
+
+def test_cmd_schema_missing_lists_every_missing_name(monkeypatch):
+    # A batch with unknown names fails loud and names ALL of them at once.
+    monkeypatch.setattr(offlane, "_list_tools", lambda *a, **k: _SCHEMA_TOOLS)
+    with pytest.raises(offlane.LaneError) as ei:
+        offlane.cmd_schema(_schema_cfg(), ["alpha", "nope", "alsomissing"])
+    msg = str(ei.value)
+    assert "nope" in msg and "alsomissing" in msg
+    assert "alpha" not in msg  # the found tool isn't reported as missing
+
+
+def test_schema_parser_accepts_multiple_tools():
+    args = offlane.build_parser().parse_args(["schema", "alpha", "beta", "gamma"])
+    assert args.tool == ["alpha", "beta", "gamma"]
 
 
 def test_peek_zero_is_honored(monkeypatch, tmp_path, capsys):
@@ -330,3 +415,4 @@ def test_help_epilog_carries_the_protocol():
     epi = offlane._HELP_EPILOG.lower()
     assert "offlane schema" in epi and "before first use" in epi
     assert "--out" in epi and "never `cat`" in epi
+    assert "batch" in epi  # the multi-tool schema shortcut is documented here too

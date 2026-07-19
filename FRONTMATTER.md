@@ -26,7 +26,10 @@ pull in only what you need with `jq`.
 2. `offlane schema <tool>` — **before the first time you call any tool.** Read the
    whole schema: its filters, projection / field parameters, and pagination.
    Narrowing the request server-side is how results stay small; a lever you skip
-   is quality you silently lose.
+   is quality you silently lose. **When you already know several tools you'll need
+   next, batch them into one call — `offlane schema <tool_a> <tool_b> <tool_c>` —**
+   which fetches the tool catalog a single time and prints a JSON object keyed by
+   tool name. Prefer this over one `schema` call per tool.
 3. `offlane call <tool> '<json args>' --out /tmp/<tool>.json` — runs the tool and
    writes the payload to the file. It prints only `bytes / records / keys`, never
    the data itself.
@@ -39,6 +42,9 @@ pull in only what you need with `jq`.
   narrow `jq` projection.
 - Push filters and limits into the `call` arguments (learned from the schema)
   rather than fetching everything and filtering after the fact.
+- Batch the schemas you know you'll need into a single `offlane schema a b c` call
+  instead of one per tool — it reads the tool catalog once and returns a name-keyed
+  map. Reach for it whenever your next few steps already name the tools involved.
 - If `offlane call` exits non-zero it printed the server's validation error — read
   it and fix your arguments; do not retry blindly.
 - `--peek N` is for a quick shape check only, never for reading data.

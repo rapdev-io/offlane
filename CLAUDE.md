@@ -25,7 +25,7 @@ pytest                       # run the suite (network-free)
 uv run --extra test pytest   # same, via uv (handles the venv + install)
 
 python -m offlane --help     # run the CLI from a checkout
-# verbs: offlane ls [prefix] | schema <tool> | call <tool> '<json>' --out FILE [--peek N]
+# verbs: offlane ls [prefix] | schema <tool> [<tool> ...] | call <tool> '<json>' --out FILE [--peek N]
 ```
 
 ## Layout
