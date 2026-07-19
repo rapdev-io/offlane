@@ -5,7 +5,7 @@ that can't already do it themselves.**
 
 ## Why this exists (and whether you need it)
 
-offlane was built to work around a specific limitation of **[Anthropic Managed
+`offlane` was built to work around a specific limitation of **[Anthropic Managed
 Agents](https://platform.claude.com/docs/en/managed-agents)**. On a Managed
 Agent's managed MCP connection:
 
@@ -24,14 +24,14 @@ route to the MCP tools, and it always lands in context.
 connection:
 
 - **A locally-running agent with a shell (e.g. Claude Code) mostly doesn't have
-  it.** It loads tool schemas lazily (on-demand tool search, not an eager dump),
+  it.** It loads tool schemas lazily via on-demand tool search,
   it can route a big read through a file and read back only a projection, and it
   can compact context to reclaim space. **If your agent already has a shell and
   lazy tools, you probably don't need offlane.**
 - **Other platforms may or may not have it** — check how yours delivers MCP
   results and tool schemas before reaching for this.
 
-offlane brings the local-agent pattern to a place that lacks it: it's an MCP
+`offlane` brings the local-agent pattern to a place that lacks it: it's an MCP
 client you run **from the sandbox's own shell**, so results land on disk and only
 your `jq` projection enters context — and tools are discovered on demand
 (`offlane ls` / `schema`) instead of dumped up front.
@@ -53,7 +53,7 @@ supplies the missing shell-side MCP client.)*
 ## What it does
 
 `offlane call` writes the tool payload to a **file on disk** and prints only a
-**byte / record / keys summary** — never the body. You then `jq`-project *just the
+**byte / record / keys summary**. You then `jq`-project *just the
 fields you need*, so only an affirmatively-chosen excerpt enters context.
 
 ```console
@@ -73,13 +73,12 @@ guardrail for them.
 
 ## Install
 
-### In an Anthropic Managed Agent (the main use case)
+### In an Anthropic Managed Agent
 
 You don't run an install command — you **declare** offlane on the environment so
 it's on the agent's `PATH` before its first turn, then teach the agent to use it:
 
-1. **Add it to the environment's package manifest** (installed pre-execution, no
-   per-session bootstrap):
+1. **Add it to the environment's package manifest** (installed pre-execution):
 
    ```jsonc
    // on the cloud environment's config
@@ -89,12 +88,12 @@ it's on the agent's `PATH` before its first turn, then teach the agent to use it
    This requires `networking.allow_package_managers: true` on the environment.
 2. **Provide the endpoint + bearer** to the sandbox as the environment variables
    `OFFLANE_MCP_URL` and `OFFLANE_MCP_TOKEN`, via the environment's credential /
-   vault mechanism.
+   vault mechanism. (more auth modes coming soon)
 3. **Prepend every implementing agent's system prompt** with the preamble in
    **[FRONTMATTER.md](FRONTMATTER.md)** — that discipline (schema-first, `--out`,
    `jq`, never `cat`) is what actually keeps results out of context.
 
-offlane is stdlib-only (zero runtime deps), so it resolves cleanly in a
+`offlane` is stdlib-only (zero runtime deps), so it resolves cleanly in a
 locked-down sandbox with nothing else to pull in.
 
 ### Locally, or on another platform
