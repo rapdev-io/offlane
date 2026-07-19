@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "offlane"
-version = "0.1.1"
+version = "0.1.2"
 description = "Move an MCP server's read results off your LLM context window — payloads land on disk, only a summary prints, you jq-project what you need."
 readme = "README.md"
 license = { text = "MIT" }
